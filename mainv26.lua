@@ -1,13 +1,11 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
-local VirtualUser = game:GetService("VirtualUser")
-
+local TeleportService = game:GetService("TeleportService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- ==================== ระบบแสดง Error / Rules GUI ====================
-local function showDebugErrorGui(titleText, errMsg, extraActionText, extraActionCallback)
+-- ==================== ระบบแสดง Error GUI ====================
+local function showDebugErrorGui(titleText, errMsg)
     pcall(function()
         local old = PlayerGui:FindFirstChild("MurimDebugErrorGui")
         if old then old:Destroy() end
@@ -71,41 +69,6 @@ local function showDebugErrorGui(titleText, errMsg, extraActionText, extraAction
         textBox.TextSize = 11
         textBox.Parent = frame
         Instance.new("UICorner", textBox).CornerRadius = UDim.new(0, 6)
-
-        local hasExtra = (type(extraActionText) == "string" and type(extraActionCallback) == "function")
-        local btnWidth = hasExtra and 0.31 or 0.47
-
-        local copyBtn = Instance.new("TextButton")
-        copyBtn.Size = UDim2.new(btnWidth, 0, 0, 32)
-        copyBtn.Position = UDim2.new(0, 10, 1, -42)
-        copyBtn.BackgroundColor3 = Color3.fromRGB(50, 120, 180)
-        copyBtn.Text = "📋 Copy All"
-        copyBtn.TextColor3 = Color3.new(1, 1, 1)
-        copyBtn.Font = Enum.Font.SourceSansBold
-        copyBtn.TextSize = 12
-        copyBtn.Parent = frame
-        Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 6)
-
-        copyBtn.MouseButton1Click:Connect(function()
-            if type(setclipboard) == "function" then
-                setclipboard(textBox.Text)
-                copyBtn.Text = "✅ Copied!"
-                task.wait(1.5)
-                copyBtn.Text = "📋 Copy All"
-            end
-        end)
-
-        local bottomCloseBtn = Instance.new("TextButton")
-        bottomCloseBtn.Size = UDim2.new(btnWidth, 0, 0, 32)
-        bottomCloseBtn.Position = UDim2.new(hasExtra and 0.67 or 0.505, 0, 1, -42)
-        bottomCloseBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 95)
-        bottomCloseBtn.Text = "❌ ปิด"
-        bottomCloseBtn.TextColor3 = Color3.new(1, 1, 1)
-        bottomCloseBtn.Font = Enum.Font.SourceSansBold
-        bottomCloseBtn.TextSize = 12
-        bottomCloseBtn.Parent = frame
-        Instance.new("UICorner", bottomCloseBtn).CornerRadius = UDim.new(0, 6)
-        bottomCloseBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
     end)
 end
 
@@ -219,7 +182,7 @@ do
         return nil, nil, nil
     end
 
-    function Hub.Fn.safeTeleport(hrp, targetCFrame, targetHrp)
+    function Hub.Fn.safeTeleport(hrp, targetCFrame)
         if not hrp or not targetCFrame then return false end
         local targetPos = targetCFrame.Position
         if targetPos.Magnitude < 5 then return false end
@@ -365,7 +328,7 @@ do
 
     function Hub.Fn.startFarmLoop()
         initHerbCache()
-        Hub.Fn.logDebug("เริ่มลูปเก็บสมุนไพร (นับสดจากบอท)...")
+        Hub.Fn.logDebug("เริ่มลูปเก็บสมุนไพร...")
         while State.isFarming do
             local char, hrp, humanoid = Hub.Fn.getCharacter()
             if char and hrp and humanoid and humanoid.Health > 0 then
@@ -374,13 +337,12 @@ do
                 if herbPart and herbPart.Parent then
                     Env.currentHerbTargetName = herbPart.Name .. " (" .. herbYear .. "Yr)"
                     local standCFrame = herbPart.CFrame * CFrame.new(0, 1.5, 1.8)
-                    Hub.Fn.safeTeleport(hrp, standCFrame, herbPart)
+                    Hub.Fn.safeTeleport(hrp, standCFrame)
                     Env.groundPlatform.CFrame = standCFrame * CFrame.new(0, -3.2, 0)
 
                     if not prompt then prompt = herbPart:FindFirstChildOfClass("ProximityPrompt") end
 
                     if State.isFarming and herbPart.Parent and (not prompt or prompt.Enabled) then
-                        local beforeCollect = Env.lastHerbCollectedAt
                         if prompt and fireproximityprompt then pcall(fireproximityprompt, prompt) end
                         if Env.Remotes.CollectHerb then Env.Remotes.CollectHerb:FireServer(herbPart) end
 
@@ -394,37 +356,23 @@ do
                             Env.collectedCooldowns[herbPart] = os.clock() + 30
                             Hub.Fn.logDebug("เก็บสำเร็จ: " .. herbPart.Name)
 
-                            -- 🎯 นับจำนวนสมุนไพรสะสมทันทีตรงนี้ ชัวร์ 100% ไม่ต้องพึ่งอีเวนต์เกม
+                            -- 🎯 นับจำนวนสะสมทันที เป้าหมาย 145 ชิ้น
                             State.sessionHerbCount = (State.sessionHerbCount or 0) + 1
                             Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/145")
 
                             if State.sessionHerbCount >= 145 then
-                                Hub.Fn.logDebug("🎯 ครบ 145 ชิ้น! กำลังยิง HTTP Request ไปหาคอม...")
+                                Hub.Fn.logDebug("🎯 ครบ 145 ชิ้น! กำลังรีจอยน์เข้าเซิร์ฟเวอร์...")
                                 
-                                local httpRequest = (syn and syn.request) or request or (http and http.request)
-                                if httpRequest then
-                                    pcall(function()
-                                        httpRequest({
-                                            Url = "http://10.5.50.115:8080/rejoin",
-                                            Method = "GET"
-                                        })
-                                    end)
-                                end
-
-                                for i = 1, 3 do
-                                    print("MUMU_REJOIN_TRIGGER_145")
-                                    task.wait(0.05)
-                                end
-                                if writefile then
-                                    pcall(function()
-                                        writefile("trigger_145.txt", "rejoin")
-                                    end)
-                                end
-
                                 State.isFarming = false
                                 Hub.Fn.setWorker("startFarmLoop", false, Hub.Fn.startFarmLoop)
                                 State.sessionHerbCount = 0
-                                task.wait(3)
+
+                                -- สั่งรีจอยน์เข้าเกมใหม่ทันที
+                                pcall(function()
+                                    TeleportService:Teleport(game.PlaceId, LocalPlayer)
+                                end)
+                                
+                                task.wait(5)
                             end
                         end
                     end
@@ -517,17 +465,6 @@ do
     DebugTitle.TextXAlignment = Enum.TextXAlignment.Left
     DebugTitle.Parent = DebugTop
 
-    local CopyDebugBtn = Instance.new("TextButton")
-    CopyDebugBtn.Size = UDim2.new(0, 58, 0, 20)
-    CopyDebugBtn.Position = UDim2.new(1, -62, 0, 3)
-    CopyDebugBtn.BackgroundColor3 = Color3.fromRGB(50, 120, 180)
-    CopyDebugBtn.TextColor3 = Color3.new(1, 1, 1)
-    CopyDebugBtn.Text = "📋 Copy"
-    CopyDebugBtn.Font = Enum.Font.SourceSansBold
-    CopyDebugBtn.TextSize = 10
-    CopyDebugBtn.Parent = DebugTop
-    Instance.new("UICorner", CopyDebugBtn).CornerRadius = UDim.new(0, 4)
-
     local DebugContent = Instance.new("TextLabel")
     DebugContent.Size = UDim2.new(1, -12, 1, -34)
     DebugContent.Position = UDim2.new(0, 6, 0, 30)
@@ -560,15 +497,6 @@ do
         end
     end)
 
-    CopyDebugBtn.MouseButton1Click:Connect(function()
-        if type(setclipboard) == "function" then
-            setclipboard(DebugContent.Text)
-            CopyDebugBtn.Text = "✅ Copied"
-            task.wait(1.5)
-            CopyDebugBtn.Text = "📋 Copy"
-        end
-    end)
-
     local MainFrame = Instance.new("Frame")
     MainFrame.Size = UDim2.new(0, 300, 0, 480)
     MainFrame.Position = UDim2.new(0.38, 0, 0.1, 0)
@@ -588,7 +516,7 @@ do
     TitleLabel.Size = UDim2.new(1, -40, 1, 0)
     TitleLabel.Position = UDim2.new(0, 10, 0, 0)
     TitleLabel.BackgroundTransparency = 1
-    TitleLabel.Text = "Murim Hub V26 (Direct Count)"
+    TitleLabel.Text = "Murim Hub V26 (Native Rejoin)"
     TitleLabel.TextColor3 = Color3.fromRGB(230, 230, 250)
     TitleLabel.Font = Enum.Font.SourceSansBold
     TitleLabel.TextSize = 13
@@ -641,13 +569,6 @@ do
         return btn
     end
 
-    local ToggleDebugPanelBtn = createButton("🐛 Toggle Debug Window: ON", Color3.fromRGB(70, 70, 110), 1)
-    Hub.Fn.connect(ToggleDebugPanelBtn.MouseButton1Click, function()
-        State.debugPanelVisible = not State.debugPanelVisible
-        DebugPanel.Visible = State.debugPanelVisible
-        ToggleDebugPanelBtn.Text = State.debugPanelVisible and "🐛 Toggle Debug Window: ON" or "🐛 Toggle Debug Window: OFF"
-    end)
-
     local ToggleFarmBtn = createButton("⏸ Stop Auto Herbs", Color3.fromRGB(200, 120, 30), 2)
     local ToggleFlightBtn = createButton("🚀 Auto Sword Flight: ON", Color3.fromRGB(60, 200, 60), 3)
 
@@ -680,5 +601,5 @@ do
     Hub.Fn.setWorker("startFarmLoop", State.isFarming, Hub.Fn.startFarmLoop)
     Hub.Fn.setWorker("startSwordFlightLoop", State.isAutoFlight, Hub.Fn.startSwordFlightLoop)
     Hub.Fn.setWorker("startDynamicStreamLoop", State.isDynamicStream, Hub.Fn.startDynamicStreamLoop)
-    Hub.Fn.logDebug("พร้อมใช้งาน V26 (Direct Count)!")
+    Hub.Fn.logDebug("พร้อมใช้งาน V26 (Native Rejoin)!")
 end
