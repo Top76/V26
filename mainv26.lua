@@ -494,7 +494,7 @@ do
         isAutoWorldBoss = false,
         isFarming = true,          -- เปิด Auto Herbs ทันที
         isAutoFlight = true,       -- เปิด Auto Sword Flight ทันที
-        sessionHerbCount = 0,      -- ตัวนับจำนวนสมุนไพรสะสมสำหรับรีจอยน์ (เป้าหมาย 145)[cite: 4]
+        sessionHerbCount = 0,      -- ตัวนับจำนวนสมุนไพรสะสมสำหรับรีจอยน์ (เป้าหมาย 145)
         isDynamicStream = true,
         herbModeIndex = 1,
         isAutoBrew = false,
@@ -617,37 +617,36 @@ do
     local Config = Hub.Config
     local UI = Hub.UI
 
-    -- 🎯 แก้ไขระบบดักฟัง HerbInventoryUpdate ให้ตรวจจับ pickedInfo แล้วนับจำนวนและสั่ง Rejoin ที่นี่โดยตรง
+    -- 🎯 แก้ไขระบบดักฟัง HerbInventoryUpdate ให้นับยอดทุกครั้งที่เซิร์ฟเวอร์ส่งการอัปเดตมา
     if Env.Remotes.HerbInventoryUpdate then
-        Hub.Fn.connect(Env.Remotes.HerbInventoryUpdate.OnClientEvent, function(data, pickedInfo)
+        Hub.Fn.connect(Env.Remotes.HerbInventoryUpdate.OnClientEvent, function(data)
             if type(data) == "table" then
                 Env.myHerbCounts = data
             end
-            if pickedInfo then
-                Env.lastHerbCollectedAt = os.clock()
-                State.sessionHerbCount = (State.sessionHerbCount or 0) + 1
-                Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/145")
+            State.sessionHerbCount = (State.sessionHerbCount or 0) + 1
+            Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/145")
+            
+            if State.sessionHerbCount >= 145 then
+                Hub.Fn.logDebug("🎯 ครบเป้าหมาย 145 ชิ้นแล้ว! กำลังส่งสัญญาณ Rejoin...")
                 
-                if State.sessionHerbCount >= 145 then
-    Hub.Fn.logDebug("🎯 ครบเป้าหมาย 145 ชิ้นแล้ว! กำลังส่งสัญญาณ Rejoin...")
-    
-    -- ป้องกันพลาดชั้นที่ 1: พิมพ์ซ้ำ 3 รอบเว้นระยะ เพื่อให้ Logcat แน่ใจว่าไม่หลุด
-    for i = 1, 3 do
-        print("MUMU_REJOIN_TRIGGER_145")
-        task.wait(0.2)
-    end
-    
-    -- ป้องกันพลาดชั้นที่ 2: บันทึกไฟล์ลงเครื่อง (100% ไม่พลาดแม้ Logcat จะเอ๋อ)
-    if writefile then
-        pcall(function()
-            writefile("trigger_145.txt", "rejoin")
-        end)
-    end
-    
-    State.isFarming = false
-    State.sessionHerbCount = 0
-    task.wait(3)
-end
+                -- พิมพ์สัญญาณย้ำกันพลาดผ่าน ADB Logcat
+                for i = 1, 3 do
+                    print("MUMU_REJOIN_TRIGGER_145")
+                    task.wait(0.05)
+                end
+                
+                -- บันทึกไฟล์สำรองเพื่อความชัวร์ 100%
+                if writefile then
+                    pcall(function()
+                        writefile("trigger_145.txt", "rejoin")
+                    end)
+                end
+                
+                -- สั่งปิดระบบฟาร์มทันทีเพื่อไม่ให้ตัวละครค้างคา
+                State.isFarming = false
+                Hub.Fn.setWorker("startFarmLoop", false, Hub.Fn.startFarmLoop)
+                State.sessionHerbCount = 0
+                task.wait(3)
             end
         end)
     end
