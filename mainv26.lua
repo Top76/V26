@@ -492,8 +492,8 @@ do
         isAutoSkills = false,
         isAutoMapEvent = false,
         isAutoWorldBoss = false,
-        isFarming = true,          -- ตั้งค่าให้เปิด Auto Herbs อัตโนมัติทันที
-        isAutoFlight = true,       -- ตั้งค่าให้เปิด Auto Sword Flight อัตโนมัติทันที
+        isFarming = true,          -- เปิด Auto Herbs ทันที
+        isAutoFlight = true,       -- เปิด Auto Sword Flight ทันที
         sessionHerbCount = 0,      -- ตัวนับจำนวนสมุนไพรสะสมสำหรับรีจอยน์ (เป้าหมาย 145)[cite: 4]
         isDynamicStream = true,
         herbModeIndex = 1,
@@ -617,6 +617,7 @@ do
     local Config = Hub.Config
     local UI = Hub.UI
 
+    -- 🎯 แก้ไขระบบดักฟัง HerbInventoryUpdate ให้ตรวจจับ pickedInfo แล้วนับจำนวนและสั่ง Rejoin ที่นี่โดยตรง
     if Env.Remotes.HerbInventoryUpdate then
         Hub.Fn.connect(Env.Remotes.HerbInventoryUpdate.OnClientEvent, function(data, pickedInfo)
             if type(data) == "table" then
@@ -624,6 +625,16 @@ do
             end
             if pickedInfo then
                 Env.lastHerbCollectedAt = os.clock()
+                State.sessionHerbCount = (State.sessionHerbCount or 0) + 1
+                Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/145")
+                
+                if State.sessionHerbCount >= 145 then
+                    Hub.Fn.logDebug("🎯 ครบเป้าหมาย 145 ชิ้นแล้ว! กำลังส่งสัญญาณ Rejoin...")
+                    print("MUMU_REJOIN_TRIGGER_145") -- สัญญาณเตือนฝั่ง ADB Listener คอมพิวเตอร์
+                    State.isFarming = false
+                    State.sessionHerbCount = 0
+                    task.wait(3)
+                end
             end
         end)
     end
@@ -1651,19 +1662,6 @@ do
                             if collected then
                                 Env.collectedCooldowns[herbPart] = os.clock() + 30
                                 Hub.Fn.logDebug("เก็บสำเร็จ: " .. herbPart.Name)
-                                
-                                -- 🎯 ระบบนับจำนวนสมุนไพรสะสมถึง 145 แล้วส่งสัญญาณ Rejoin
-                                State.sessionHerbCount = (State.sessionHerbCount or 0) + 1
-                                Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/145")
-                                
-                                if State.sessionHerbCount >= 145 then
-                                    Hub.Fn.logDebug("🎯 ครบเป้าหมาย 145 ชิ้นแล้ว! กำลังส่งสัญญาณ Rejoin...")
-                                    print("MUMU_REJOIN_TRIGGER_145") -- สัญญาณที่ ADB Listener ฝั่งคอมพิวเตอร์รอฟัง
-                                    State.isFarming = false
-                                    State.sessionHerbCount = 0
-                                    task.wait(3)
-                                    break
-                                end
                             end
                         end
                     else
@@ -1785,7 +1783,7 @@ do
     end
 end
 
--- 5. สร้าง GUI หลัก (ตั้งค่าปุ่มเริ่มต้นเป็น ON ให้สอดคล้องกับการรันอัตโนมัติ)
+-- 5. สร้าง GUI หลัก
 do
     local Env = Hub.Env
     local State = Hub.State
@@ -2096,7 +2094,6 @@ do
     local ZoneExpanseBtn = createButton("🌌 Zone: Celestial Expanse", Color3.fromRGB(80, 60, 160), 25)
 
     createCategoryHeader("🌿 GATHERING & DYNAMIC MAP STREAMER", 26)
-    -- ปรับสถานะปุ่มเริ่มต้นเป็น ON (สีส้ม/เขียว)
     local ToggleFarmBtn = createButton("⏸ Stop Auto Herbs", Color3.fromRGB(200, 120, 30), 27)
     local ToggleFlightBtn = createButton("🚀 Auto Sword Flight: ON", Color3.fromRGB(60, 200, 60), 27.5)
     local ToggleHerbModeBtn = createButton("🌟 Mode: " .. Config.herbModes[State.herbModeIndex], Color3.fromRGB(180, 130, 30), 28)
@@ -2235,7 +2232,6 @@ do
         ScreenGui:Destroy()
     end)
 
-    -- เริ่มต้นรัน Worker ทันทีเมื่อเปิดสคริปต์
     Hub.Fn.setWorker("startFarmLoop", State.isFarming, Hub.Fn.startFarmLoop)
     Hub.Fn.setWorker("startSwordFlightLoop", State.isAutoFlight, Hub.Fn.startSwordFlightLoop)
     Hub.Fn.setWorker("startDynamicStreamLoop", State.isDynamicStream, Hub.Fn.startDynamicStreamLoop)
