@@ -6,13 +6,11 @@ local VirtualUser = game:GetService("VirtualUser")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- ==================== ระบบแสดง Error / Rules GUI (พร้อมปุ่ม Copy และปุ่มปิด) ====================
+-- ==================== ระบบแสดง Error / Rules GUI ====================
 local function showDebugErrorGui(titleText, errMsg, extraActionText, extraActionCallback)
     pcall(function()
         local old = PlayerGui:FindFirstChild("MurimDebugErrorGui")
-        if old then
-            old:Destroy()
-        end
+        if old then old:Destroy() end
 
         local sg = Instance.new("ScreenGui")
         sg.Name = "MurimDebugErrorGui"
@@ -56,9 +54,7 @@ local function showDebugErrorGui(titleText, errMsg, extraActionText, extraAction
         closeBtn.TextSize = 13
         closeBtn.Parent = topBar
         Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
-        closeBtn.MouseButton1Click:Connect(function()
-            sg:Destroy()
-        end)
+        closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
 
         local textBox = Instance.new("TextBox")
         textBox.Size = UDim2.new(1, -20, 1, -95)
@@ -96,27 +92,8 @@ local function showDebugErrorGui(titleText, errMsg, extraActionText, extraAction
                 copyBtn.Text = "✅ Copied!"
                 task.wait(1.5)
                 copyBtn.Text = "📋 Copy All"
-            else
-                copyBtn.Text = "❌ Not Supported"
             end
         end)
-
-        if hasExtra then
-            local extraBtn = Instance.new("TextButton")
-            extraBtn.Size = UDim2.new(btnWidth, 0, 0, 32)
-            extraBtn.Position = UDim2.new(0.345, 0, 1, -42)
-            extraBtn.BackgroundColor3 = Color3.fromRGB(45, 145, 95)
-            extraBtn.Text = extraActionText
-            extraBtn.TextColor3 = Color3.new(1, 1, 1)
-            extraBtn.Font = Enum.Font.SourceSansBold
-            extraBtn.TextSize = 12
-            extraBtn.Parent = frame
-            Instance.new("UICorner", extraBtn).CornerRadius = UDim.new(0, 6)
-
-            extraBtn.MouseButton1Click:Connect(function()
-                extraActionCallback(extraBtn, textBox)
-            end)
-        end
 
         local bottomCloseBtn = Instance.new("TextButton")
         bottomCloseBtn.Size = UDim2.new(btnWidth, 0, 0, 32)
@@ -128,38 +105,23 @@ local function showDebugErrorGui(titleText, errMsg, extraActionText, extraAction
         bottomCloseBtn.TextSize = 12
         bottomCloseBtn.Parent = frame
         Instance.new("UICorner", bottomCloseBtn).CornerRadius = UDim.new(0, 6)
-
-        bottomCloseBtn.MouseButton1Click:Connect(function()
-            sg:Destroy()
-        end)
+        bottomCloseBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
     end)
 end
 
--- ==================== โครงสร้างหลักแบบแยก Scope ====================
+-- ==================== โครงสร้างหลัก ====================
 local Hub = {
     Env = {
         connections = {},
         workers = {},
         destroyed = false,
         Remotes = {},
-        ActiveMapEvent = nil,
-        availableMobNames = {},
-        selectedMobsMap = {},
-        mobUIElements = {},
-        myHerbCounts = {},
-        lastHerbCollectedAt = 0,
-        lastStreamedTarget = nil,
-        mobInfoCache = {},
-        mobInfoCacheAt = -999999,
-        orbParts = nil,
         cachedHerbPrompts = {},
         herbCacheInitialized = false,
         collectedCooldowns = {},
         zoneIndex = 1,
         patrolAngle = 0,
         lastErrorText = "ไม่มี Error",
-        cachedWorldBossArenaPos = nil,
-        lastRulesSnapshot = nil,
         currentHerbTargetName = "None",
         botStatusText = "Initializing..."
     },
@@ -169,7 +131,6 @@ local Hub = {
     Fn = {}
 }
 
--- 1. ระบบพื้นฐาน Remotes, Helpers & Game Rules Inspector
 do
     local Env = Hub.Env
     local UI = Hub.UI
@@ -183,15 +144,12 @@ do
     end
 
     function Hub.Fn.connect(signal, callback)
-        if not signal then
-            return nil
-        end
+        if not signal then return nil end
         local connection = signal:Connect(function(...)
             local ok, err = xpcall(callback, debug.traceback, ...)
             if not ok and not Env.destroyed then
                 Env.lastErrorText = tostring(err)
-                Hub.Fn.logDebug("ERR(Event): " .. tostring(err))
-                showDebugErrorGui("⚠️ Event Callback Error", err)
+                showDebugErrorGui("⚠️ Event Error", err)
             end
         end)
         Env.connections[connection] = true
@@ -208,16 +166,9 @@ do
 
     function Hub.Fn.setWorker(name, enabled, callback)
         Hub.Fn.stopWorker(name)
-        if not enabled or Env.destroyed then
-            return nil
-        end
+        if not enabled or Env.destroyed then return nil end
         local thread = task.spawn(function()
-            local ok, err = xpcall(callback, debug.traceback)
-            if not ok and not Env.destroyed then
-                Env.lastErrorText = tostring(err)
-                Hub.Fn.logDebug("ERR(" .. name .. "): " .. tostring(err))
-                showDebugErrorGui("⚠️ Worker Error: " .. name, err)
-            end
+            pcall(callback)
         end)
         Env.workers[name] = thread
         return thread
@@ -225,55 +176,12 @@ do
 
     local CultivationEvents = ReplicatedStorage:FindFirstChild("CultivationEvents")
     if CultivationEvents then
-        local remoteNames = {
-            "CollectHerb",
-            "HerbInventoryUpdate",
-            "Breakthrough",
-            "BreakthroughMinigameResult",
-            "StartBreakthroughMinigame",
-            "BodyBreakthrough",
-            "BodyBreakthroughCutsceneDone",
-            "StartPushup",
-            "Tribulation",
-            "StartMeditate",
-            "ZoneChanged",
-            "SoulProjection",
-            "SpiritWorld",
-            "CultivateResumed",
-            "ClaimReward",
-            "UseSkill",
-            "CombatHit",
-            "CauldronStartBrew",
-            "CauldronClaim",
-            "CauldronStoke",
-            "CauldronStateUpdate",
-            "CultivationOrbClicked",
-            "MapEvent",
-            "WorldBoss",
-            "SwordFlight"
-        }
-        for _, rName in ipairs(remoteNames) do
-            Env.Remotes[rName] = CultivationEvents:FindFirstChild(rName)
-        end
+        Env.Remotes.CollectHerb = CultivationEvents:FindFirstChild("CollectHerb")
+        Env.Remotes.SwordFlight = CultivationEvents:FindFirstChild("SwordFlight")
     end
 
     Hub.Config = {
-        herbModes = {
-            "1000Yr Sniper + All Herbs",
-            "Only 1000-Year (เฉพาะ 1000 ปี)"
-        },
-        farmOffsets = {
-            { text = "ใต้ดิน ลึกมาก (-12 Studs)", offset = Vector3.new(0, -12, 0) },
-            { text = "ใต้ดิน ลึก (-8 Studs)", offset = Vector3.new(0, -8, 0) },
-            { text = "ใต้ดิน ปานกลาง (-5 Studs)", offset = Vector3.new(0, -5, 0) },
-            { text = "ใต้ดิน ตื้น (-3 Studs)", offset = Vector3.new(0, -3, 0) },
-            { text = "บนหัว ต่ำ (+4 Studs)", offset = Vector3.new(0, 4, 0) },
-            { text = "บนหัว ปานกลาง (+6 Studs)", offset = Vector3.new(0, 6, 0) },
-            { text = "บนหัว สูง (+10 Studs)", offset = Vector3.new(0, 10, 0) },
-            { text = "ด้านหลัง ใกล้ (-3 Studs)", offset = Vector3.new(0, 0, 3) },
-            { text = "ด้านหลัง ไกล (-5 Studs)", offset = Vector3.new(0, 0, 5) },
-            { text = "ตรงกลางตัวมอน (0 Studs)", offset = Vector3.new(0, 0, 0) }
-        },
+        herbModes = { "1000Yr Sniper + All Herbs", "Only 1000-Year (เฉพาะ 1000 ปี)" },
         fallbackZones = {
             Vector3.new(0, 120, 0),
             Vector3.new(-350, 140, 2200),
@@ -284,32 +192,12 @@ do
     }
 
     Hub.State = {
-        isFarmingMob = false,
-        isAoEHit = true,
-        isTurboAttack = true,
-        isAutoSkills = false,
-        isAutoMapEvent = false,
-        isAutoWorldBoss = false,
-        isFarming = true,          
-        isAutoFlight = true,       
-        sessionHerbCount = 0,      
+        isFarming = true,
+        isAutoFlight = true,
+        sessionHerbCount = 0,      -- ตัวนับสมุนไพรสะสม (เป้าหมาย 145)
         isDynamicStream = true,
         herbModeIndex = 1,
-        isAutoBrew = false,
-        isAutoCultivate = false,
-        isAutoBreakthrough = false,
-        isAutoBodyBreakthrough = false,
-        isAutoPushup = false,
-        isAutoTribulation = false,
-        isAutoOrb = false,
-        isAutoSoul = false,
-        recipeIndex = 1,
-        yearIndex = 1,
-        selectedMinYear = 0,
-        farmOffsetIndex = 3,
-        currentOffset = Vector3.new(0, -5, 0),
-        cauldronStatus = "idle",
-        debugPanelVisible = true   
+        debugPanelVisible = true
     }
 
     local groundPlatform = Instance.new("Part")
@@ -326,21 +214,15 @@ do
         if char then
             local hrp = char:FindFirstChild("HumanoidRootPart")
             local hum = char:FindFirstChildOfClass("Humanoid")
-            if hrp and hum then
-                return char, hrp, hum
-            end
+            if hrp and hum then return char, hrp, hum end
         end
         return nil, nil, nil
     end
 
     function Hub.Fn.safeTeleport(hrp, targetCFrame, targetHrp)
-        if not hrp or not targetCFrame then
-            return false
-        end
+        if not hrp or not targetCFrame then return false end
         local targetPos = targetCFrame.Position
-        if targetPos.Magnitude < 5 then
-            return false
-        end
+        if targetPos.Magnitude < 5 then return false end
 
         local startPos = hrp.Position
         local flatDist = Vector2.new(targetPos.X - startPos.X, targetPos.Z - startPos.Z).Magnitude
@@ -349,16 +231,7 @@ do
             groundPlatform.CFrame = cframe * CFrame.new(0, -1, 0)
             hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            if targetHrp and targetHrp.Parent then
-                local safeLookTarget = targetHrp.Position + Vector3.new(0.01, 0, 0.01)
-                pcall(function()
-                    hrp.CFrame = CFrame.new(cframe.Position, safeLookTarget)
-                end)
-            else
-                pcall(function()
-                    hrp.CFrame = cframe
-                end)
-            end
+            pcall(function() hrp.CFrame = cframe end)
         end
 
         if flatDist <= 38 then
@@ -371,9 +244,7 @@ do
         local rotOnly = targetCFrame - targetCFrame.Position
 
         for i = 1, steps do
-            if not hrp or not hrp.Parent then
-                return false
-            end
+            if not hrp or not hrp.Parent then return false end
             local nextPos = startPos:Lerp(targetPos, i / steps)
             applyCFrame(CFrame.new(nextPos) * rotOnly)
             task.wait(0.10)
@@ -382,51 +253,10 @@ do
     end
 end
 
--- 2. ระบบ Events & Gathering (HTTP Request ไปที่ 10.5.50.115:8080/rejoin)
+-- ==================== ลูปฟาร์มสมุนไพรและการนับจำนวน ====================
 do
     local Env = Hub.Env
     local State = Hub.State
-
-    if Env.Remotes.HerbInventoryUpdate then
-        Hub.Fn.connect(Env.Remotes.HerbInventoryUpdate.OnClientEvent, function(data)
-            if type(data) == "table" then
-                Env.myHerbCounts = data
-            end
-            State.sessionHerbCount = (State.sessionHerbCount or 0) + 1
-            Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/145")
-            
-            if State.sessionHerbCount >= 145 then
-                Hub.Fn.logDebug("🎯 ครบเป้าหมาย 145 ชิ้นแล้ว! กำลังยิง HTTP Request ไปหาคอม...")
-                
-                -- ยิง HTTP Request ไปที่ PowerShell Server บนคอมพิวเตอร์ของคุณ
-                local httpRequest = (syn and syn.request) or request or (http and http.request)
-                if httpRequest then
-                    pcall(function()
-                        httpRequest({
-                            Url = "http://10.5.50.115:8080/rejoin",
-                            Method = "GET"
-                        })
-                    end)
-                end
-                
-                -- สำรองเผื่อกรณีฉุกเฉิน
-                for i = 1, 3 do
-                    print("MUMU_REJOIN_TRIGGER_145")
-                    task.wait(0.05)
-                end
-                if writefile then
-                    pcall(function()
-                        writefile("trigger_145.txt", "rejoin")
-                    end)
-                end
-                
-                State.isFarming = false
-                Hub.Fn.setWorker("startFarmLoop", false, Hub.Fn.startFarmLoop)
-                State.sessionHerbCount = 0
-                task.wait(3)
-            end
-        end)
-    end
 
     function Hub.Fn.startSwordFlightLoop()
         while State.isAutoFlight do
@@ -436,9 +266,7 @@ do
                 local isFlying = char:GetAttribute("SwordFlying") == true
                 local hasLearned = LocalPlayer:GetAttribute("SwordFlightLearned") == true
                 if hasLearned and not isFlying and swordEvent then
-                    pcall(function()
-                        swordEvent:FireServer(true)
-                    end)
+                    pcall(function() swordEvent:FireServer(true) end)
                 end
             end
             task.wait(0.5)
@@ -462,9 +290,7 @@ do
                 if child:IsA("BasePart") then addPoint(child.Position) end
             end
         end
-        for _, pos in ipairs(Hub.Config.fallbackZones) do
-            addPoint(pos)
-        end
+        for _, pos in ipairs(Hub.Config.fallbackZones) do addPoint(pos) end
         return points
     end
 
@@ -473,9 +299,7 @@ do
             local points = Hub.Fn.getDynamicStreamPoints()
             if #points > 0 then
                 local targetPos = points[math.random(1, #points)]
-                pcall(function()
-                    workspace:RequestStreamAroundAsync(targetPos)
-                end)
+                pcall(function() workspace:RequestStreamAroundAsync(targetPos) end)
             end
             task.wait(0.8)
         end
@@ -490,17 +314,12 @@ do
             end
         end
         Hub.Fn.connect(workspace.DescendantAdded, registerObj)
-        Hub.Fn.connect(workspace.DescendantRemoving, function(obj)
-            Env.cachedHerbPrompts[obj] = nil
-        end)
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            registerObj(obj)
-        end
+        Hub.Fn.connect(workspace.DescendantRemoving, function(obj) Env.cachedHerbPrompts[obj] = nil end)
+        for _, obj in ipairs(workspace:GetDescendants()) do registerObj(obj) end
     end
 
     local function getBestHerbTarget(fromPos)
         initHerbCache()
-        local spiritWorld = workspace:FindFirstChild("SpiritWorld")
         local herbSpots = workspace:FindFirstChild("HerbSpots")
         local now = os.clock()
         local only1000Yr = (State.herbModeIndex == 2)
@@ -508,16 +327,12 @@ do
 
         local function evaluatePart(part, prompt)
             if seenParts[part] or not part or not part.Parent then return end
-            if spiritWorld and part:IsDescendantOf(spiritWorld) then return end
             if prompt and not prompt.Enabled then return end
             seenParts[part] = true
 
-            local herbYear = part:GetAttribute("HerbYear") or part:GetAttribute("Year")
-            if type(herbYear) ~= "number" then herbYear = 1 end
+            local herbYear = part:GetAttribute("HerbYear") or part:GetAttribute("Year") or 1
             if only1000Yr and herbYear < 1000 then return end
-
-            local cdUntil = Env.collectedCooldowns[part]
-            if cdUntil and now < cdUntil then return end
+            if Env.collectedCooldowns[part] and now < Env.collectedCooldowns[part] then return end
 
             local dist = (part.Position - fromPos).Magnitude
             table.insert(candidates, { part = part, prompt = prompt, dist = dist, year = herbYear })
@@ -525,18 +340,13 @@ do
 
         if herbSpots then
             for _, spot in ipairs(herbSpots:GetChildren()) do
-                if spot:IsA("BasePart") then
-                    evaluatePart(spot, spot:FindFirstChildOfClass("ProximityPrompt"))
-                end
+                if spot:IsA("BasePart") then evaluatePart(spot, spot:FindFirstChildOfClass("ProximityPrompt")) end
             end
         end
 
         for prompt in pairs(Env.cachedHerbPrompts) do
             if prompt and prompt.Parent then
-                if prompt.Enabled then
-                    local part = prompt.Parent
-                    if part:IsA("BasePart") then evaluatePart(part, prompt) end
-                end
+                if prompt.Enabled and prompt.Parent:IsA("BasePart") then evaluatePart(prompt.Parent, prompt) end
             else
                 Env.cachedHerbPrompts[prompt] = nil
             end
@@ -550,13 +360,12 @@ do
             return a.dist < b.dist
         end)
 
-        local best = candidates[1]
-        return best.part, best.prompt, best.dist, best.year
+        return candidates[1].part, candidates[1].prompt, candidates[1].dist, candidates[1].year
     end
 
     function Hub.Fn.startFarmLoop()
         initHerbCache()
-        Hub.Fn.logDebug("เริ่มลูปเก็บสมุนไพร (Smart All-Map)...")
+        Hub.Fn.logDebug("เริ่มลูปเก็บสมุนไพร (นับสดจากบอท)...")
         while State.isFarming do
             local char, hrp, humanoid = Hub.Fn.getCharacter()
             if char and hrp and humanoid and humanoid.Health > 0 then
@@ -568,32 +377,59 @@ do
                     Hub.Fn.safeTeleport(hrp, standCFrame, herbPart)
                     Env.groundPlatform.CFrame = standCFrame * CFrame.new(0, -3.2, 0)
 
-                    if not prompt then
-                        prompt = herbPart:FindFirstChildOfClass("ProximityPrompt")
-                    end
+                    if not prompt then prompt = herbPart:FindFirstChildOfClass("ProximityPrompt") end
 
                     if State.isFarming and herbPart.Parent and (not prompt or prompt.Enabled) then
                         local beforeCollect = Env.lastHerbCollectedAt
-                        if prompt and fireproximityprompt then
-                            pcall(fireproximityprompt, prompt)
-                        end
-                        if Env.Remotes.CollectHerb then
-                            Env.Remotes.CollectHerb:FireServer(herbPart)
-                        end
+                        if prompt and fireproximityprompt then pcall(fireproximityprompt, prompt) end
+                        if Env.Remotes.CollectHerb then Env.Remotes.CollectHerb:FireServer(herbPart) end
 
                         local waitStart = os.clock()
-                        while State.isFarming and herbPart.Parent and (not prompt or prompt.Enabled) and Env.lastHerbCollectedAt == beforeCollect and (os.clock() - waitStart) < 0.25 do
+                        while State.isFarming and herbPart.Parent and (not prompt or prompt.Enabled) and (os.clock() - waitStart) < 0.25 do
                             task.wait(0.03)
                         end
 
-                        local collected = (not herbPart.Parent) or (prompt and not prompt.Enabled) or (Env.lastHerbCollectedAt > beforeCollect)
+                        local collected = (not herbPart.Parent) or (prompt and not prompt.Enabled)
                         if collected then
                             Env.collectedCooldowns[herbPart] = os.clock() + 30
                             Hub.Fn.logDebug("เก็บสำเร็จ: " .. herbPart.Name)
+
+                            -- 🎯 นับจำนวนสมุนไพรสะสมทันทีตรงนี้ ชัวร์ 100% ไม่ต้องพึ่งอีเวนต์เกม
+                            State.sessionHerbCount = (State.sessionHerbCount or 0) + 1
+                            Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/145")
+
+                            if State.sessionHerbCount >= 145 then
+                                Hub.Fn.logDebug("🎯 ครบ 145 ชิ้น! กำลังยิง HTTP Request ไปหาคอม...")
+                                
+                                local httpRequest = (syn and syn.request) or request or (http and http.request)
+                                if httpRequest then
+                                    pcall(function()
+                                        httpRequest({
+                                            Url = "http://10.5.50.115:8080/rejoin",
+                                            Method = "GET"
+                                        })
+                                    end)
+                                end
+
+                                for i = 1, 3 do
+                                    print("MUMU_REJOIN_TRIGGER_145")
+                                    task.wait(0.05)
+                                end
+                                if writefile then
+                                    pcall(function()
+                                        writefile("trigger_145.txt", "rejoin")
+                                    end)
+                                end
+
+                                State.isFarming = false
+                                Hub.Fn.setWorker("startFarmLoop", false, Hub.Fn.startFarmLoop)
+                                State.sessionHerbCount = 0
+                                task.wait(3)
+                            end
                         end
                     end
                 else
-                    Env.currentHerbTargetName = "Searching (กำลังหาเป้าหมาย...)"
+                    Env.currentHerbTargetName = "Searching (กำลังเดินหา...)"
                     local streamPoints = Hub.Fn.getDynamicStreamPoints()
                     if Env.zoneIndex > #streamPoints then Env.zoneIndex = 1 end
                     local center = streamPoints[Env.zoneIndex] or Vector3.new(0, 120, 0)
@@ -604,9 +440,7 @@ do
                     end
 
                     local nextPos = Vector3.new(center.X + math.cos(Env.patrolAngle) * 450, center.Y + 25, center.Z + math.sin(Env.patrolAngle) * 450)
-                    pcall(function()
-                        workspace:RequestStreamAroundAsync(nextPos)
-                    end)
+                    pcall(function() workspace:RequestStreamAroundAsync(nextPos) end)
 
                     local startPos = hrp.Position
                     local steps = math.max(1, math.ceil((nextPos - startPos).Magnitude / 36))
@@ -630,7 +464,7 @@ do
     end
 end
 
--- 3. สร้าง GUI หลักพร้อมหน้าต่าง Debug พกพา
+-- ==================== สร้าง UI และหน้าต่าง Debug ====================
 do
     local Env = Hub.Env
     local State = Hub.State
@@ -657,7 +491,6 @@ do
     OpenToggleBtn.Parent = ScreenGui
     Instance.new("UICorner", OpenToggleBtn).CornerRadius = UDim.new(0, 8)
 
-    -- หน้าต่าง Debug แบบลอยได้
     local DebugPanel = Instance.new("Frame")
     DebugPanel.Size = UDim2.new(0, 320, 0, 180)
     DebugPanel.Position = UDim2.new(0.02, 0, 0.28, 0)
@@ -733,8 +566,6 @@ do
             CopyDebugBtn.Text = "✅ Copied"
             task.wait(1.5)
             CopyDebugBtn.Text = "📋 Copy"
-        else
-            CopyDebugBtn.Text = "❌ No Clip"
         end
     end)
 
@@ -757,7 +588,7 @@ do
     TitleLabel.Size = UDim2.new(1, -40, 1, 0)
     TitleLabel.Position = UDim2.new(0, 10, 0, 0)
     TitleLabel.BackgroundTransparency = 1
-    TitleLabel.Text = "Murim Hub V26 (Debug Edition)"
+    TitleLabel.Text = "Murim Hub V26 (Direct Count)"
     TitleLabel.TextColor3 = Color3.fromRGB(230, 230, 250)
     TitleLabel.Font = Enum.Font.SourceSansBold
     TitleLabel.TextSize = 13
@@ -815,7 +646,6 @@ do
         State.debugPanelVisible = not State.debugPanelVisible
         DebugPanel.Visible = State.debugPanelVisible
         ToggleDebugPanelBtn.Text = State.debugPanelVisible and "🐛 Toggle Debug Window: ON" or "🐛 Toggle Debug Window: OFF"
-        ToggleDebugPanelBtn.BackgroundColor3 = State.debugPanelVisible and Color3.fromRGB(70, 70, 110) or Color3.fromRGB(100, 100, 100)
     end)
 
     local ToggleFarmBtn = createButton("⏸ Stop Auto Herbs", Color3.fromRGB(200, 120, 30), 2)
@@ -850,5 +680,5 @@ do
     Hub.Fn.setWorker("startFarmLoop", State.isFarming, Hub.Fn.startFarmLoop)
     Hub.Fn.setWorker("startSwordFlightLoop", State.isAutoFlight, Hub.Fn.startSwordFlightLoop)
     Hub.Fn.setWorker("startDynamicStreamLoop", State.isDynamicStream, Hub.Fn.startDynamicStreamLoop)
-    Hub.Fn.logDebug("พร้อมใช้งาน V26 Debug Edition สมบูรณ์!")
+    Hub.Fn.logDebug("พร้อมใช้งาน V26 (Direct Count)!")
 end
