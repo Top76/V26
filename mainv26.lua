@@ -629,12 +629,25 @@ do
                 Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/145")
                 
                 if State.sessionHerbCount >= 145 then
-                    Hub.Fn.logDebug("🎯 ครบเป้าหมาย 145 ชิ้นแล้ว! กำลังส่งสัญญาณ Rejoin...")
-                    print("MUMU_REJOIN_TRIGGER_145") -- สัญญาณเตือนฝั่ง ADB Listener คอมพิวเตอร์
-                    State.isFarming = false
-                    State.sessionHerbCount = 0
-                    task.wait(3)
-                end
+    Hub.Fn.logDebug("🎯 ครบเป้าหมาย 145 ชิ้นแล้ว! กำลังส่งสัญญาณ Rejoin...")
+    
+    -- ป้องกันพลาดชั้นที่ 1: พิมพ์ซ้ำ 3 รอบเว้นระยะ เพื่อให้ Logcat แน่ใจว่าไม่หลุด
+    for i = 1, 3 do
+        print("MUMU_REJOIN_TRIGGER_145")
+        task.wait(0.2)
+    end
+    
+    -- ป้องกันพลาดชั้นที่ 2: บันทึกไฟล์ลงเครื่อง (100% ไม่พลาดแม้ Logcat จะเอ๋อ)
+    if writefile then
+        pcall(function()
+            writefile("trigger_145.txt", "rejoin")
+        end)
+    end
+    
+    State.isFarming = false
+    State.sessionHerbCount = 0
+    task.wait(3)
+end
             end
         end)
     end
