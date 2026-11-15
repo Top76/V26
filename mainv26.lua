@@ -135,7 +135,7 @@ local function showDebugErrorGui(titleText, errMsg, extraActionText, extraAction
     end)
 end
 
--- ==================== โครงสร้างหลักแบบแยก Scope (ป้องกันเกิน 200 Local Variables) ====================
+-- ==================== โครงสร้างหลักแบบแยก Scope ====================
 local Hub = {
     Env = {
         connections = {},
@@ -220,7 +220,6 @@ do
         return thread
     end
 
-    -- ฟังก์ชันสแกน Rules, Configs, Remotes และเทียบความเปลี่ยนแปลงจาก Snapshot เดิม
     function Hub.Fn.inspectGameRules()
         local rawLines = {}
         local function addRaw(str)
@@ -321,8 +320,6 @@ do
         end
 
         local currentText = table.concat(rawLines, "\n")
-
-        -- อ่าน Snapshot เก่าจากไฟล์หรือหน่วยความจำเพื่อเทียบความแตกต่าง
         local snapshotFile = "murim_rules_snapshot.txt"
         local oldText = Env.lastRulesSnapshot
         if not oldText and type(isfile) == "function" and type(readfile) == "function" then
@@ -410,7 +407,8 @@ do
             "CauldronStateUpdate",
             "CultivationOrbClicked",
             "MapEvent",
-            "WorldBoss"
+            "WorldBoss",
+            "SwordFlight"
         }
         for _, rName in ipairs(remoteNames) do
             Env.Remotes[rName] = CultivationEvents:FindFirstChild(rName)
@@ -494,7 +492,9 @@ do
         isAutoSkills = false,
         isAutoMapEvent = false,
         isAutoWorldBoss = false,
-        isFarming = false,
+        isFarming = true,          -- ตั้งค่าให้เปิด Auto Herbs อัตโนมัติทันที
+        isAutoFlight = true,       -- ตั้งค่าให้เปิด Auto Sword Flight อัตโนมัติทันที
+        sessionHerbCount = 0,      -- ตัวนับจำนวนสมุนไพรสะสมสำหรับรีจอยน์ (เป้าหมาย 145)[cite: 4]
         isDynamicStream = true,
         herbModeIndex = 1,
         isAutoBrew = false,
@@ -589,13 +589,11 @@ do
             end
         end
 
-        -- ระยะไม่เกิน 38 Studs อยู่ในค่าเผื่อ SLACK = 40 ของ MovementGuardRules
         if flatDist <= 38 then
             applyCFrame(targetCFrame)
             return true
         end
 
-        -- เคลื่อนที่ด้วยความเร็ว ~360 Studs/วินาที (ต่ำกว่า MAX_FLAT_SPEED = 400)
         local stepDist = 36
         local steps = math.ceil(flatDist / stepDist)
         local rotOnly = targetCFrame - targetCFrame.Position
@@ -950,15 +948,10 @@ do
     end
 
     function Hub.Fn.startDynamicStreamLoop()
-        local streamIdx = 1
         while State.isDynamicStream do
             local points = Hub.Fn.getDynamicStreamPoints()
             if #points > 0 then
-                if streamIdx > #points then
-                    streamIdx = 1
-                end
-                local targetPos = points[streamIdx]
-                streamIdx = streamIdx + 1
+                local targetPos = points[math.random(1, #points)]
                 pcall(function()
                     workspace:RequestStreamAroundAsync(targetPos)
                 end)
@@ -1052,7 +1045,7 @@ do
     end
 end
 
--- 3. ระบบสแกนและฟาร์มมอนสเตอร์ (หยุดอัตโนมัติชั่วคราวเมื่อ World Boss เกิด)
+-- 3. ระบบสแกนและฟาร์มมอนสเตอร์
 do
     local Env = Hub.Env
     local State = Hub.State
@@ -1265,174 +1258,6 @@ do
             end
         end
     end)
-
-    local function isValidFarmTarget(target)
-        return target and target.model and target.model.Parent
-            and Env.selectedMobsMap[target.model.Name] == true
-            and target.hum and target.hum.Parent and target.hum.Health > 0
-            and target.hrp and target.hrp.Parent
-    end
-
-    function Hub.Fn.startMobFarmLoop()
-        local nextTargetUI, nextToolAction = 0, 0
-        local clusterMobs, clusterCursor, nextClusterRefresh = {}, 1, 0
-        local expandedParts = {}
-
-        local function resetHitboxes()
-            for part, origSize in pairs(expandedParts) do
-                if part and part.Parent then
-                    pcall(function()
-                        part.Size = origSize
-                        part.Transparency = 1
-                    end)
-                end
-            end
-            expandedParts = {}
-        end
-
-        local function getGroupAround(centerPos, allMobs)
-            local group = {}
-            for _, m in ipairs(allMobs) do
-                if isValidFarmTarget(m) and (m.hrp.Position - centerPos).Magnitude <= 38 then
-                    table.insert(group, m)
-                    if State.isAoEHit then
-                        if not expandedParts[m.hrp] then
-                            expandedParts[m.hrp] = m.hrp.Size
-                        end
-                        pcall(function()
-                            m.hrp.Size = Vector3.new(25, 25, 25)
-                            m.hrp.CanCollide = false
-                        end)
-                    end
-                end
-            end
-            return group
-        end
-
-        while State.isFarmingMob do
-            if Hub.Fn.isWorldBossActive() then
-                resetHitboxes()
-                if UI.TargetHPLabel then
-                    UI.TargetHPLabel.Text = "🎯 พักฟาร์มชั่วคราว -> สลับไปตี World Boss!"
-                    UI.TargetHPLabel.TextColor3 = Color3.fromRGB(255, 130, 100)
-                end
-                task.wait(0.5)
-            elseif State.isAutoMapEvent and Env.ActiveMapEvent then
-                resetHitboxes()
-                task.wait(0.5)
-            else
-                local _, playerRoot, playerHumanoid = Hub.Fn.getCharacter()
-                if not playerRoot or not playerHumanoid or playerHumanoid.Health <= 0 then
-                    if UI.TargetHPLabel then
-                        UI.TargetHPLabel.Text = "🎯 รอตัวละครเกิดใหม่..."
-                        UI.TargetHPLabel.TextColor3 = Color3.fromRGB(170, 170, 170)
-                    end
-                    task.wait(0.3)
-                else
-                    local allMobs = getTargetMonsters()
-                    if #allMobs > 0 then
-                        table.sort(allMobs, function(a, b)
-                            return (a.hrp.Position - playerRoot.Position).Magnitude < (b.hrp.Position - playerRoot.Position).Magnitude
-                        end)
-                        local anchorMob = allMobs[1]
-
-                        while State.isFarmingMob and isValidFarmTarget(anchorMob) and not Hub.Fn.isWorldBossActive() and not (State.isAutoMapEvent and Env.ActiveMapEvent) do
-                            local char, hrp, humanoid = Hub.Fn.getCharacter()
-                            if not char or not humanoid or humanoid.Health <= 0 then
-                                break
-                            end
-
-                            local now = os.clock()
-                            if now >= nextClusterRefresh then
-                                clusterMobs = getGroupAround(anchorMob.hrp.Position, getTargetMonsters())
-                                nextClusterRefresh = now + 0.4
-                            end
-
-                            local activeTarget = anchorMob
-                            if State.isAoEHit and #clusterMobs > 1 then
-                                if clusterCursor > #clusterMobs then
-                                    clusterCursor = 1
-                                end
-                                activeTarget = clusterMobs[clusterCursor]
-                                clusterCursor = clusterCursor + 1
-                                if not isValidFarmTarget(activeTarget) then
-                                    activeTarget = anchorMob
-                                end
-                            elseif not State.isAoEHit then
-                                resetHitboxes()
-                            end
-
-                            if UI.TargetHPLabel and now >= nextTargetUI then
-                                nextTargetUI = now + 0.1
-                                local curHP = math.floor(activeTarget.hum.Health)
-                                local maxHP = math.floor(activeTarget.hum.MaxHealth)
-                                local countText = State.isAoEHit and (" [กลุ่ม " .. #clusterMobs .. " ตัว]") or ""
-                                UI.TargetHPLabel.Text = "🎯 " .. activeTarget.model.Name .. ": " .. curHP .. "/" .. maxHP .. countText
-                                UI.TargetHPLabel.TextColor3 = Color3.fromRGB(255, 220, 100)
-                            end
-
-                            Hub.Fn.safeTeleport(hrp, activeTarget.hrp.CFrame * CFrame.new(State.currentOffset), activeTarget.hrp)
-                            if not State.isFarmingMob or not isValidFarmTarget(activeTarget) or Hub.Fn.isWorldBossActive() then
-                                break
-                            end
-
-                            if Env.Remotes.CombatHit then
-                                Env.Remotes.CombatHit:FireServer(activeTarget.model, 1)
-                                if State.isTurboAttack then
-                                    Env.Remotes.CombatHit:FireServer(activeTarget.model, 1)
-                                end
-                                if State.isAoEHit then
-                                    for _, otherMob in ipairs(clusterMobs) do
-                                        if otherMob.model ~= activeTarget.model and isValidFarmTarget(otherMob) then
-                                            Env.Remotes.CombatHit:FireServer(otherMob.model, 1)
-                                        end
-                                    end
-                                end
-                            end
-
-                            now = os.clock()
-                            if now >= nextToolAction then
-                                nextToolAction = now + (State.isTurboAttack and 0.10 or 0.20)
-                                local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
-                                local tool = char:FindFirstChildOfClass("Tool") or (backpack and backpack:FindFirstChildOfClass("Tool"))
-                                if tool and tool.Parent ~= char then
-                                    humanoid:EquipTool(tool)
-                                end
-                                if tool then
-                                    tool:Activate()
-                                end
-                                pcall(function()
-                                    VirtualUser:CaptureController()
-                                    VirtualUser:ClickButton1(Vector2.new(0, 0))
-                                end)
-                            end
-
-                            task.wait(State.isTurboAttack and 0.06 or 0.12)
-                        end
-                    else
-                        resetHitboxes()
-                        if UI.TargetHPLabel then
-                            UI.TargetHPLabel.Text = "🎯 Target: N/A (ไม่มีมอนสเตอร์ที่เลือก)"
-                            UI.TargetHPLabel.TextColor3 = Color3.fromRGB(170, 170, 170)
-                        end
-                        if not State.isFarming and not Hub.Fn.isWorldBossActive() and not (State.isAutoMapEvent and Env.ActiveMapEvent) then
-                            Env.groundPlatform.CFrame = CFrame.new(0, 9999, 0)
-                        end
-                        task.wait(0.5)
-                    end
-                end
-            end
-        end
-
-        resetHitboxes()
-        if UI.TargetHPLabel then
-            UI.TargetHPLabel.Text = "🎯 Target: Standby (รอการทำงาน)"
-            UI.TargetHPLabel.TextColor3 = Color3.fromRGB(170, 170, 170)
-        end
-        if not State.isFarming and not Hub.Fn.isWorldBossActive() and not (State.isAutoMapEvent and Env.ActiveMapEvent) then
-            Env.groundPlatform.CFrame = CFrame.new(0, 9999, 0)
-        end
-    end
 end
 
 -- 4. ระบบ Cultivation, Soul, Herbs และ Alchemy
@@ -1440,6 +1265,23 @@ do
     local Env = Hub.Env
     local State = Hub.State
     local Config = Hub.Config
+
+    function Hub.Fn.startSwordFlightLoop()
+        while State.isAutoFlight do
+            local char, _, humanoid = Hub.Fn.getCharacter()
+            if char and humanoid and humanoid.Health > 0 then
+                local swordEvent = Env.Remotes.SwordFlight or (ReplicatedStorage:FindFirstChild("CultivationEvents") and ReplicatedStorage.CultivationEvents:FindFirstChild("SwordFlight"))
+                local isFlying = char:GetAttribute("SwordFlying") == true
+                local hasLearned = LocalPlayer:GetAttribute("SwordFlightLearned") == true
+                if hasLearned and not isFlying and swordEvent then
+                    pcall(function()
+                        swordEvent:FireServer(true)
+                    end)
+                end
+            end
+            task.wait(0.5)
+        end
+    end
 
     function Hub.Fn.startSkillsLoop()
         local skillKeys = { "Z", "X", "C", "V" }
@@ -1809,6 +1651,19 @@ do
                             if collected then
                                 Env.collectedCooldowns[herbPart] = os.clock() + 30
                                 Hub.Fn.logDebug("เก็บสำเร็จ: " .. herbPart.Name)
+                                
+                                -- 🎯 ระบบนับจำนวนสมุนไพรสะสมถึง 145 แล้วส่งสัญญาณ Rejoin
+                                State.sessionHerbCount = (State.sessionHerbCount or 0) + 1
+                                Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/145")
+                                
+                                if State.sessionHerbCount >= 145 then
+                                    Hub.Fn.logDebug("🎯 ครบเป้าหมาย 145 ชิ้นแล้ว! กำลังส่งสัญญาณ Rejoin...")
+                                    print("MUMU_REJOIN_TRIGGER_145") -- สัญญาณที่ ADB Listener ฝั่งคอมพิวเตอร์รอฟัง
+                                    State.isFarming = false
+                                    State.sessionHerbCount = 0
+                                    task.wait(3)
+                                    break
+                                end
                             end
                         end
                     else
@@ -1930,7 +1785,7 @@ do
     end
 end
 
--- 5. สร้าง GUI หลัก (แยก Scope เพื่อไม่ให้ชนลิมิต 200 Local)
+-- 5. สร้าง GUI หลัก (ตั้งค่าปุ่มเริ่มต้นเป็น ON ให้สอดคล้องกับการรันอัตโนมัติ)
 do
     local Env = Hub.Env
     local State = Hub.State
@@ -1977,7 +1832,7 @@ do
     TitleLabel.Size = UDim2.new(1, -40, 1, 0)
     TitleLabel.Position = UDim2.new(0, 10, 0, 0)
     TitleLabel.BackgroundTransparency = 1
-    TitleLabel.Text = "Murim Hub V26 (+Rules Checker)"
+    TitleLabel.Text = "Murim Hub V26 (+Auto Rejoin 145)"
     TitleLabel.TextColor3 = Color3.fromRGB(230, 230, 250)
     TitleLabel.Font = Enum.Font.SourceSansBold
     TitleLabel.TextSize = 13
@@ -2091,7 +1946,7 @@ do
     UI.DebugBox.Size = UDim2.new(1, 0, 0, 60)
     UI.DebugBox.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
     UI.DebugBox.TextColor3 = Color3.fromRGB(120, 255, 140)
-    UI.DebugBox.Text = "[Ready] โหลดสคริปต์ V26 สำเร็จ!"
+    UI.DebugBox.Text = "[Ready] โหลดสคริปต์ V26 สำเร็จ! (Auto Herbs & Flight เปิดอัตโนมัติ)"
     UI.DebugBox.TextWrapped = true
     UI.DebugBox.MultiLine = true
     UI.DebugBox.ClearTextOnFocus = false
@@ -2241,7 +2096,9 @@ do
     local ZoneExpanseBtn = createButton("🌌 Zone: Celestial Expanse", Color3.fromRGB(80, 60, 160), 25)
 
     createCategoryHeader("🌿 GATHERING & DYNAMIC MAP STREAMER", 26)
-    local ToggleFarmBtn = createButton("🌿 Start Auto Herbs (Smart All-Map)", Color3.fromRGB(40, 160, 80), 27)
+    -- ปรับสถานะปุ่มเริ่มต้นเป็น ON (สีส้ม/เขียว)
+    local ToggleFarmBtn = createButton("⏸ Stop Auto Herbs", Color3.fromRGB(200, 120, 30), 27)
+    local ToggleFlightBtn = createButton("🚀 Auto Sword Flight: ON", Color3.fromRGB(60, 200, 60), 27.5)
     local ToggleHerbModeBtn = createButton("🌟 Mode: " .. Config.herbModes[State.herbModeIndex], Color3.fromRGB(180, 130, 30), 28)
     local ToggleStreamBtn = createButton("🗺️ Dynamic Map Streamer: ON", Color3.fromRGB(45, 135, 175), 29)
 
@@ -2305,6 +2162,12 @@ do
         ToggleFarmBtn.Text = State.isFarming and "⏸ Stop Auto Herbs" or "🌿 Start Auto Herbs (Smart All-Map)"
         ToggleFarmBtn.BackgroundColor3 = State.isFarming and Color3.fromRGB(200, 120, 30) or Color3.fromRGB(40, 160, 80)
         Hub.Fn.setWorker("startFarmLoop", State.isFarming, Hub.Fn.startFarmLoop)
+    end)
+    Hub.Fn.connect(ToggleFlightBtn.MouseButton1Click, function()
+        State.isAutoFlight = not State.isAutoFlight
+        ToggleFlightBtn.Text = State.isAutoFlight and "🚀 Auto Sword Flight: ON" or "🚀 Auto Sword Flight: OFF"
+        ToggleFlightBtn.BackgroundColor3 = State.isAutoFlight and Color3.fromRGB(60, 200, 60) or Color3.fromRGB(100, 100, 100)
+        Hub.Fn.setWorker("startSwordFlightLoop", State.isAutoFlight, Hub.Fn.startSwordFlightLoop)
     end)
     Hub.Fn.connect(ToggleHerbModeBtn.MouseButton1Click, function()
         State.herbModeIndex = (State.herbModeIndex % #Config.herbModes) + 1
@@ -2372,7 +2235,10 @@ do
         ScreenGui:Destroy()
     end)
 
+    -- เริ่มต้นรัน Worker ทันทีเมื่อเปิดสคริปต์
+    Hub.Fn.setWorker("startFarmLoop", State.isFarming, Hub.Fn.startFarmLoop)
+    Hub.Fn.setWorker("startSwordFlightLoop", State.isAutoFlight, Hub.Fn.startSwordFlightLoop)
     Hub.Fn.setWorker("startDynamicStreamLoop", State.isDynamicStream, Hub.Fn.startDynamicStreamLoop)
     Hub.Fn.rebuildMobListUI()
-    Hub.Fn.logDebug("พร้อมใช้งาน V26! (จุดสตรีม: " .. #Hub.Fn.getDynamicStreamPoints() .. " จุด)")
+    Hub.Fn.logDebug("พร้อมใช้งาน V26! (เริ่มเก็บสมุนไพรและขี่ดาบบินอัตโนมัติทันที)")
 end
