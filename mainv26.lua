@@ -2,7 +2,13 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- ป้องกันการค้างตอนรอ PlayerGui
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
+if not PlayerGui then
+    warn("[Murim Hub] โหลด PlayerGui ไม่สำเร็จ กรุณารันใหม่อีกครั้งหลังเข้าเกมเต็ม 100%")
+    return
+end
 
 -- ==================== ระบบแสดง Error GUI ====================
 local function showDebugErrorGui(titleText, errMsg)
@@ -137,38 +143,6 @@ do
         return thread
     end
 
-    -- 🛡️ [เพิ่มใหม่] ฟังก์ชันตรวจสอบ Rule ของเกมตอนรัน
-    local function checkGameRules()
-        pcall(function()
-            Hub.Fn.logDebug("🔍 กำลังตรวจสอบ Rule ของเกม...")
-            
-            -- ตรวจสอบ MovementGuardRules
-            local moveRules = ReplicatedStorage:FindFirstChild("MovementGuardRules")
-            if moveRules and moveRules:IsA("ModuleScript") then
-                local success, data = pcall(require, moveRules)
-                if success and type(data) == "table" then
-                    if data.HERB_RATE_MAX then
-                        Hub.Fn.logDebug("📌 Rule เช็คเจอ Herb Max: " .. tostring(data.HERB_RATE_MAX)[cite: 3])
-                    end
-                    if data.RATE_WINDOW then
-                        Hub.Fn.logDebug("📌 Rule เช็คเจอ Rate Window: " .. tostring(data.RATE_WINDOW) .. "s"[cite: 3])
-                    end
-                end
-            end
-
-            -- ตรวจสอบ KillRepeatRules
-            local killRules = ReplicatedStorage:FindFirstChild("KillRepeatRules")
-            if killRules and killRules:IsA("ModuleScript") then
-                local success, data = pcall(require, killRules)
-                if success and type(data) == "table" then
-                    if data.MAX then
-                        Hub.Fn.logDebug("📌 Rule เช็คเจอ Repeat Max: " .. tostring(data.MAX)[cite: 3])
-                    end
-                end
-            end
-        end)
-    end
-
     local CultivationEvents = ReplicatedStorage:FindFirstChild("CultivationEvents")
     if CultivationEvents then
         Env.Remotes.CollectHerb = CultivationEvents:FindFirstChild("CollectHerb")
@@ -189,7 +163,7 @@ do
     Hub.State = {
         isFarming = true,
         isAutoFlight = true,
-        sessionHerbCount = 0,      -- ตัวนับสมุนไพรสะสม (ตั้งไว้ 130 เพื่อความปลอดภัย)
+        sessionHerbCount = 0,
         isDynamicStream = true,
         herbModeIndex = 1,
         debugPanelVisible = true
@@ -246,9 +220,6 @@ do
         end
         return true
     end
-    
-    -- รันเช็คกฎทันทีตอนเริ่มระบบ
-    checkGameRules()
 end
 
 -- ==================== ลูปฟาร์มสมุนไพรและการนับจำนวน ====================
@@ -382,30 +353,33 @@ do
                         if Env.Remotes.CollectHerb then Env.Remotes.CollectHerb:FireServer(herbPart) end
 
                         local waitStart = os.clock()
-                        while State.isFarming and herbPart.Parent and (not prompt or prompt.Enabled) and (os.clock() - waitStart) < 0.25 do
+                        while State.isFarming and herbPart.Parent and (not prompt or prompt.Enabled) and (os.clock() - waitStart) < 0.4 do
                             task.wait(0.03)
                         end
 
-                        local collected = (not herbPart.Parent) or (prompt and not prompt.Enabled)
-                        if collected then
-                            Env.collectedCooldowns[herbPart] = os.clock() + 30
-                            Hub.Fn.logDebug("เก็บสำเร็จ: " .. herbPart.Name)
+                        local isActuallyCollected = (not herbPart.Parent) or (prompt and not prompt.Enabled)
+                        if isActuallyCollected then
+                            if not Env.collectedCooldowns[herbPart] or os.clock() > Env.collectedCooldowns[herbPart] then
+                                Env.collectedCooldowns[herbPart] = os.clock() + 30
+                                Hub.Fn.logDebug("เก็บสำเร็จ: " .. herbPart.Name)
 
-                            State.sessionHerbCount = (State.sessionHerbCount or 0) + 1
-                            Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/130")
+                                State.sessionHerbCount = (State.sessionHerbCount or 0) + 1
+                                Hub.Fn.logDebug("🌿 สมุนไพรสะสมรอบนี้: " .. State.sessionHerbCount .. "/130")
 
-                            if State.sessionHerbCount >= 130 then
-                                Hub.Fn.logDebug("🎯 ครบ 130 ชิ้น! กำลังรีจอยน์หนี Rate Limit...")
-                                
-                                State.isFarming = false
-                                Hub.Fn.setWorker("startFarmLoop", false, Hub.Fn.startFarmLoop)
-                                State.sessionHerbCount = 0
+                                if State.sessionHerbCount >= 130 then
+                                    Hub.Fn.logDebug("🎯 ครบ 130 ชิ้น! กำลังรีจอยน์หนี Rate Limit...")
+                                    
+                                    State.isFarming = false
+                                    Hub.Fn.setWorker("startFarmLoop", false, Hub.Fn.startFarmLoop)
+                                    State.sessionHerbCount = 0
 
-                                pcall(function()
-                                    TeleportService:Teleport(game.PlaceId, LocalPlayer)
-                                end)
-                                
-                                task.wait(5)
+                                    task.wait(1)
+                                    pcall(function()
+                                        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+                                    end)
+                                    
+                                    task.wait(5)
+                                end
                             end
                         end
                     end
@@ -549,7 +523,7 @@ do
     TitleLabel.Size = UDim2.new(1, -40, 1, 0)
     TitleLabel.Position = UDim2.new(0, 10, 0, 0)
     TitleLabel.BackgroundTransparency = 1
-    TitleLabel.Text = "Murim Hub V29 (Auto Rule Check)"
+    TitleLabel.Text = "Murim Hub V32 (Safe Run)"
     TitleLabel.TextColor3 = Color3.fromRGB(230, 230, 250)
     TitleLabel.Font = Enum.Font.SourceSansBold
     TitleLabel.TextSize = 13
@@ -623,7 +597,7 @@ do
     Hub.Fn.connect(OpenToggleBtn.MouseButton1Click, function()
         isGuiVisible = not isGuiVisible
         MainFrame.Visible = isGuiVisible
-        OpenToggleBtn.Text = isGuiVisible and `⚡ Hub [Hide]` or `⚡ Hub [Open]`
+        OpenToggleBtn.Text = isGuiVisible and "⚡ Hub [Hide]" or "⚡ Hub [Open]"
     end)
     Hub.Fn.connect(CloseBtn.MouseButton1Click, function()
         isGuiVisible = false
@@ -634,5 +608,5 @@ do
     Hub.Fn.setWorker("startFarmLoop", State.isFarming, Hub.Fn.startFarmLoop)
     Hub.Fn.setWorker("startSwordFlightLoop", State.isAutoFlight, Hub.Fn.startSwordFlightLoop)
     Hub.Fn.setWorker("startDynamicStreamLoop", State.isDynamicStream, Hub.Fn.startDynamicStreamLoop)
-    Hub.Fn.logDebug("พร้อมใช้งาน V29 (Auto Rule Checker)!")
+    Hub.Fn.logDebug("พร้อมใช้งาน V32 (Safe Run)!")
 end
