@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
 -- ป้องกันการค้างตอนรอ PlayerGui
@@ -8,6 +9,21 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
 if not PlayerGui then
     warn("[Murim Hub] โหลด PlayerGui ไม่สำเร็จ กรุณารันใหม่อีกครั้งหลังเข้าเกมเต็ม 100%")
     return
+end
+
+-- ==================== ระบบ Rejoin ปลอดภัย (แก้ Error 769) ====================
+local function safeRejoin()
+    local success, err = pcall(function()
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    end)
+    
+    if not success then
+        warn("[Murim Hub] Rejoin ล้มเหลว กำลังลองใหม่อีกครั้ง...", err)
+        task.wait(2)
+        pcall(function()
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        end)
+    end
 end
 
 -- ==================== ระบบแสดง Error GUI ====================
@@ -92,7 +108,8 @@ local Hub = {
         patrolAngle = 0,
         lastErrorText = "ไม่มี Error",
         currentHerbTargetName = "None",
-        botStatusText = "Initializing..."
+        botStatusText = "Initializing...",
+        lastActionTick = 0
     },
     UI = {},
     Config = {},
@@ -144,9 +161,25 @@ do
     end
 
     local CultivationEvents = ReplicatedStorage:FindFirstChild("CultivationEvents")
-    if CultivationEvents then
-        Env.Remotes.CollectHerb = CultivationEvents:FindFirstChild("CollectHerb")
-        Env.Remotes.SwordFlight = CultivationEvents:FindFirstChild("SwordFlight")
+    if not CultivationEvents then
+        showDebugErrorGui("⚠️ Game Update Alert", "ไม่พบโฟลเดอร์ CultivationEvents! เกมอาจจะมีการอัปเดตเปลี่ยนโครงสร้าง")
+        return
+    end
+
+    local requiredRemotes = {
+        CollectHerb = "CollectHerb",
+        SwordFlight = "SwordFlight",
+        StartMeditate = "StartMeditate",
+        SoulProjection = "SoulProjection"
+    }
+
+    for key, remoteName in pairs(requiredRemotes) do
+        local remoteObj = CultivationEvents:FindFirstChild(remoteName)
+        if remoteObj then
+            Env.Remotes[key] = remoteObj
+        else
+            warn("[Murim Hub] Warning: ไม่พบ Remote -> " .. remoteName)
+        end
     end
 
     Hub.Config = {
@@ -166,7 +199,8 @@ do
         sessionHerbCount = 0,
         isDynamicStream = true,
         herbModeIndex = 1,
-        debugPanelVisible = true
+        debugPanelVisible = true,
+        herbCategory = "Spirit"
     }
 
     local groundPlatform = Instance.new("Part")
@@ -231,7 +265,7 @@ do
         while State.isAutoFlight do
             local char, _, humanoid = Hub.Fn.getCharacter()
             if char and humanoid and humanoid.Health > 0 then
-                local swordEvent = Env.Remotes.SwordFlight or (ReplicatedStorage:FindFirstChild("CultivationEvents") and ReplicatedStorage.CultivationEvents:FindFirstChild("SwordFlight"))
+                local swordEvent = Env.Remotes.SwordFlight
                 local isFlying = char:GetAttribute("SwordFlying") == true
                 local hasLearned = LocalPlayer:GetAttribute("SwordFlightLearned") == true
                 if hasLearned and not isFlying and swordEvent then
@@ -299,6 +333,13 @@ do
             if prompt and not prompt.Enabled then return end
             seenParts[part] = true
 
+            local nameLower = part.Name:lower()
+            local parentName = part.Parent and part.Parent.Name:lower() or ""
+            local isSpiritHerb = nameLower:find("spirit") or parentName:find("spirit")
+
+            if State.herbCategory == "Spirit" and not isSpiritHerb then return end
+            if State.herbCategory == "Normal" and isSpiritHerb then return end
+
             local herbYear = part:GetAttribute("HerbYear") or part:GetAttribute("Year") or 1
             if only1000Yr and herbYear < 1000 then return end
             if Env.collectedCooldowns[part] and now < Env.collectedCooldowns[part] then return end
@@ -337,6 +378,52 @@ do
         Hub.Fn.logDebug("เริ่มลูปเก็บสมุนไพร...")
         while State.isFarming do
             local char, hrp, humanoid = Hub.Fn.getCharacter()
+            
+            -- ระบบเช็ก ถอดจิตอัตโนมัติ
+            if State.herbCategory == "Spirit" and char then
+                local isProjecting = LocalPlayer:GetAttribute("SoulProjecting") == true or LocalPlayer:GetAttribute("SoulProjecting") == 1
+                local isInSpirit = isProjecting or char:GetAttribute("InSpiritRealm") == true
+                
+                if not isInSpirit then
+                    local now = os.clock()
+                    if now - Env.lastActionTick > 4 then
+                        Env.lastActionTick = now
+                        
+                        local isFlying = char:GetAttribute("SwordFlying") == true
+                        if isFlying and Env.Remotes.SwordFlight then
+                            pcall(function() Env.Remotes.SwordFlight:FireServer(false) end)
+                            task.wait(0.3)
+                        end
+                        
+                        Hub.Fn.logDebug("🧘 กำลังจำลองกด M และสั่งนั่งสมาธิ...")
+                        pcall(function()
+                            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.M, false, game)
+                            task.wait(0.1)
+                            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.M, false, game)
+                        end)
+                        if Env.Remotes.StartMeditate then
+                            pcall(function() Env.Remotes.StartMeditate:FireServer() end)
+                        end
+                        task.wait(1.5)
+                        
+                        local cooldown = (tonumber(LocalPlayer:GetAttribute("SoulCooldownUntil")) or 0) - workspace:GetServerTimeNow()
+                        if cooldown <= 0 and Env.Remotes.SoulProjection then
+                            Hub.Fn.logDebug("👻 กำลังถอดจิตเข้าโลกวิญญาณ...")
+                            Env.Remotes.SoulProjection:FireServer("start")
+                            task.wait(2.1)
+                            
+                            if Env.Remotes.SwordFlight then
+                                Hub.Fn.logDebug("🚀 ถอดจิตเสร็จแล้ว! กำลังสั่งเปิดบินกระบี่...")
+                                pcall(function() Env.Remotes.SwordFlight:FireServer(true) end)
+                                task.wait(0.5)
+                            end
+                        end
+                    end
+                    task.wait(0.5)
+                    continue
+                end
+            end
+
             if char and hrp and humanoid and humanoid.Health > 0 then
                 local herbPart, prompt, _, herbYear = getBestHerbTarget(hrp.Position)
 
@@ -368,16 +455,12 @@ do
 
                                 if State.sessionHerbCount >= 130 then
                                     Hub.Fn.logDebug("🎯 ครบ 130 ชิ้น! กำลังรีจอยน์หนี Rate Limit...")
-                                    
                                     State.isFarming = false
                                     Hub.Fn.setWorker("startFarmLoop", false, Hub.Fn.startFarmLoop)
                                     State.sessionHerbCount = 0
 
                                     task.wait(1)
-                                    pcall(function()
-                                        TeleportService:Teleport(game.PlaceId, LocalPlayer)
-                                    end)
-                                    
+                                    safeRejoin()
                                     task.wait(5)
                                 end
                             end
@@ -385,6 +468,38 @@ do
                     end
                 else
                     Env.currentHerbTargetName = "Searching (กำลังเดินหา...)"
+                    
+                    -- เช็กถ้าอยู่โหมด Spirit และสมุนไพรวิญญาณหมดเกลี้ยง -> Rejoin อัตโนมัติทันที
+                    if State.herbCategory == "Spirit" then
+                        local foundAnySpirit = false
+                        local herbSpots = workspace:FindFirstChild("HerbSpots")
+                        if herbSpots then
+                            for _, spot in ipairs(herbSpots:GetChildren()) do
+                                if spot:IsA("BasePart") then
+                                    local nameLower = spot.Name:lower()
+                                    local parentName = spot.Parent and spot.Parent.Name:lower() or ""
+                                    if nameLower:find("spirit") or parentName:find("spirit") then
+                                        local pr = spot:FindFirstChildOfClass("ProximityPrompt")
+                                        if not pr or pr.Enabled then
+                                            foundAnySpirit = true
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        if not foundAnySpirit then
+                            Hub.Fn.logDebug("👻 สมุนไพรโลกวิญญาณหมดเกลี้ยง! กำลังรีจอยน์หาห้องใหม่ (Safe Rejoin)...")
+                            State.isFarming = false
+                            Hub.Fn.setWorker("startFarmLoop", false, Hub.Fn.startFarmLoop)
+                            task.wait(1)
+                            safeRejoin()
+                            task.wait(5)
+                            break
+                        end
+                    end
+
                     local streamPoints = Hub.Fn.getDynamicStreamPoints()
                     if Env.zoneIndex > #streamPoints then Env.zoneIndex = 1 end
                     local center = streamPoints[Env.zoneIndex] or Vector3.new(0, 120, 0)
@@ -491,12 +606,13 @@ do
                 local char, hrp = Hub.Fn.getCharacter()
                 local posStr = hrp and string.format("X:%.0f Y:%.0f Z:%.0f", hrp.Position.X, hrp.Position.Y, hrp.Position.Z) or "No Character"
                 local text = string.format(
-                    "📌 Session Herbs: %d / 130\n🤖 Status: %s\n🎯 Target: %s\n📍 Pos: %s\n⚡ Farming Active: %s",
+                    "📌 Session Herbs: %d / 130\n🤖 Status: %s\n🎯 Target: %s\n📍 Pos: %s\n⚡ Farming Active: %s\n🌿 Mode: %s",
                     State.sessionHerbCount,
                     tostring(Env.botStatusText),
                     tostring(Env.currentHerbTargetName),
                     posStr,
-                    tostring(State.isFarming)
+                    tostring(State.isFarming),
+                    tostring(State.herbCategory)
                 )
                 DebugContent.Text = text
             end)
@@ -523,7 +639,7 @@ do
     TitleLabel.Size = UDim2.new(1, -40, 1, 0)
     TitleLabel.Position = UDim2.new(0, 10, 0, 0)
     TitleLabel.BackgroundTransparency = 1
-    TitleLabel.Text = "Murim Hub V32 (Safe Run)"
+    TitleLabel.Text = "Murim Hub V53 (Safe Rejoin Fix)"
     TitleLabel.TextColor3 = Color3.fromRGB(230, 230, 250)
     TitleLabel.Font = Enum.Font.SourceSansBold
     TitleLabel.TextSize = 13
@@ -578,6 +694,8 @@ do
 
     local ToggleFarmBtn = createButton("⏸ Stop Auto Herbs", Color3.fromRGB(200, 120, 30), 2)
     local ToggleFlightBtn = createButton("🚀 Auto Sword Flight: ON", Color3.fromRGB(60, 200, 60), 3)
+    local ToggleCategoryBtn = createButton("👻 Mode: Spirit Herbs (วิญญาณ)", Color3.fromRGB(120, 60, 200), 4)
+    local ToggleDebugPanelBtn = createButton("🐛 Toggle Debug Panel: ON", Color3.fromRGB(80, 100, 160), 5)
 
     Hub.Fn.connect(ToggleFarmBtn.MouseButton1Click, function()
         State.isFarming = not State.isFarming
@@ -591,6 +709,25 @@ do
         ToggleFlightBtn.Text = State.isAutoFlight and "🚀 Auto Sword Flight: ON" or "🚀 Auto Sword Flight: OFF"
         ToggleFlightBtn.BackgroundColor3 = State.isAutoFlight and Color3.fromRGB(60, 200, 60) or Color3.fromRGB(100, 100, 100)
         Hub.Fn.setWorker("startSwordFlightLoop", State.isAutoFlight, Hub.Fn.startSwordFlightLoop)
+    end)
+
+    Hub.Fn.connect(ToggleCategoryBtn.MouseButton1Click, function()
+        if State.herbCategory == "Spirit" then
+            State.herbCategory = "Normal"
+            ToggleCategoryBtn.Text = "🌿 Mode: Normal Herbs (ปกติ)"
+            ToggleCategoryBtn.BackgroundColor3 = Color3.fromRGB(40, 120, 200)
+        else
+            State.herbCategory = "Spirit"
+            ToggleCategoryBtn.Text = "👻 Mode: Spirit Herbs (วิญญาณ)"
+            ToggleCategoryBtn.BackgroundColor3 = Color3.fromRGB(120, 60, 200)
+        end
+    end)
+
+    Hub.Fn.connect(ToggleDebugPanelBtn.MouseButton1Click, function()
+        State.debugPanelVisible = not State.debugPanelVisible
+        DebugPanel.Visible = State.debugPanelVisible
+        ToggleDebugPanelBtn.Text = State.debugPanelVisible and "🐛 Toggle Debug Panel: ON" or "🐛 Toggle Debug Panel: OFF"
+        ToggleDebugPanelBtn.BackgroundColor3 = State.debugPanelVisible and Color3.fromRGB(80, 100, 160) or Color3.fromRGB(100, 100, 100)
     end)
 
     local isGuiVisible = true
@@ -608,5 +745,5 @@ do
     Hub.Fn.setWorker("startFarmLoop", State.isFarming, Hub.Fn.startFarmLoop)
     Hub.Fn.setWorker("startSwordFlightLoop", State.isAutoFlight, Hub.Fn.startSwordFlightLoop)
     Hub.Fn.setWorker("startDynamicStreamLoop", State.isDynamicStream, Hub.Fn.startDynamicStreamLoop)
-    Hub.Fn.logDebug("พร้อมใช้งาน V32 (Safe Run)!")
+    Hub.Fn.logDebug("พร้อมใช้งาน V53 (Safe Rejoin Fix)!")
 end
