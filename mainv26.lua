@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 -- ป้องกันการค้างตอนรอ PlayerGui
@@ -9,6 +10,48 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
 if not PlayerGui then
     warn("[Murim Hub] โหลด PlayerGui ไม่สำเร็จ กรุณารันใหม่อีกครั้งหลังเข้าเกมเต็ม 100%")
     return
+end
+
+-- ==================== ระบบ Config (Save / Load) ====================
+local configFile = "MurimHub_Config.json"
+
+local HubConfigData = {
+    isFarming = true,
+    isAutoFlight = true,
+    herbCategory = "Spirit",
+    herbModeIndex = 1,
+    debugPanelVisible = true
+}
+
+local function loadConfig()
+    pcall(function()
+        if isfile and isfile(configFile) then
+            local content = readfile(configFile)
+            local data = HttpService:JSONDecode(content)
+            if data then
+                if data.isFarming ~= nil then HubConfigData.isFarming = data.isFarming end
+                if data.isAutoFlight ~= nil then HubConfigData.isAutoFlight = data.isAutoFlight end
+                if data.herbCategory ~= nil then HubConfigData.herbCategory = data.herbCategory end
+                if data.herbModeIndex ~= nil then HubConfigData.herbModeIndex = data.herbModeIndex end
+                if data.debugPanelVisible ~= nil then HubConfigData.debugPanelVisible = data.debugPanelVisible end
+            end
+        end
+    end)
+end
+
+loadConfig()
+
+local function saveConfig(State)
+    pcall(function()
+        local data = {
+            isFarming = State.isFarming,
+            isAutoFlight = State.isAutoFlight,
+            herbCategory = State.herbCategory,
+            herbModeIndex = State.herbModeIndex,
+            debugPanelVisible = State.debugPanelVisible
+        }
+        writefile(configFile, HttpService:JSONEncode(data))
+    end)
 end
 
 -- ==================== ระบบ Rejoin ปลอดภัย (แก้ Error 769) ====================
@@ -194,13 +237,13 @@ do
     }
 
     Hub.State = {
-        isFarming = true,
-        isAutoFlight = true,
+        isFarming = HubConfigData.isFarming,
+        isAutoFlight = HubConfigData.isAutoFlight,
         sessionHerbCount = 0,
         isDynamicStream = true,
-        herbModeIndex = 1,
-        debugPanelVisible = true,
-        herbCategory = "Spirit"
+        herbModeIndex = HubConfigData.herbModeIndex,
+        debugPanelVisible = HubConfigData.debugPanelVisible,
+        herbCategory = HubConfigData.herbCategory
     }
 
     local groundPlatform = Instance.new("Part")
@@ -469,37 +512,6 @@ do
                 else
                     Env.currentHerbTargetName = "Searching (กำลังเดินหา...)"
                     
-                    -- เช็กถ้าอยู่โหมด Spirit และสมุนไพรวิญญาณหมดเกลี้ยง -> Rejoin อัตโนมัติทันที
-                    if State.herbCategory == "Spirit" then
-                        local foundAnySpirit = false
-                        local herbSpots = workspace:FindFirstChild("HerbSpots")
-                        if herbSpots then
-                            for _, spot in ipairs(herbSpots:GetChildren()) do
-                                if spot:IsA("BasePart") then
-                                    local nameLower = spot.Name:lower()
-                                    local parentName = spot.Parent and spot.Parent.Name:lower() or ""
-                                    if nameLower:find("spirit") or parentName:find("spirit") then
-                                        local pr = spot:FindFirstChildOfClass("ProximityPrompt")
-                                        if not pr or pr.Enabled then
-                                            foundAnySpirit = true
-                                            break
-                                        end
-                                    end
-                                end
-                            end
-                        end
-
-                        if not foundAnySpirit then
-                            Hub.Fn.logDebug("👻 สมุนไพรโลกวิญญาณหมดเกลี้ยง! กำลังรีจอยน์หาห้องใหม่ (Safe Rejoin)...")
-                            State.isFarming = false
-                            Hub.Fn.setWorker("startFarmLoop", false, Hub.Fn.startFarmLoop)
-                            task.wait(1)
-                            safeRejoin()
-                            task.wait(5)
-                            break
-                        end
-                    end
-
                     local streamPoints = Hub.Fn.getDynamicStreamPoints()
                     if Env.zoneIndex > #streamPoints then Env.zoneIndex = 1 end
                     local center = streamPoints[Env.zoneIndex] or Vector3.new(0, 120, 0)
@@ -566,6 +578,7 @@ do
     DebugPanel.Position = UDim2.new(0.02, 0, 0.28, 0)
     DebugPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
     DebugPanel.BorderSizePixel = 0
+    DebugPanel.Visible = State.debugPanelVisible
     DebugPanel.Parent = ScreenGui
     Instance.new("UICorner", DebugPanel).CornerRadius = UDim.new(0, 8)
 
@@ -621,7 +634,7 @@ do
     end)
 
     local MainFrame = Instance.new("Frame")
-    MainFrame.Size = UDim2.new(0, 300, 0, 480)
+    MainFrame.Size = UDim2.new(0, 300, 0, 520)
     MainFrame.Position = UDim2.new(0.38, 0, 0.1, 0)
     MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
     MainFrame.BorderSizePixel = 0
@@ -639,7 +652,7 @@ do
     TitleLabel.Size = UDim2.new(1, -40, 1, 0)
     TitleLabel.Position = UDim2.new(0, 10, 0, 0)
     TitleLabel.BackgroundTransparency = 1
-    TitleLabel.Text = "Murim Hub V53 (Safe Rejoin Fix)"
+    TitleLabel.Text = "Murim Hub V55 (Config Save)"
     TitleLabel.TextColor3 = Color3.fromRGB(230, 230, 250)
     TitleLabel.Font = Enum.Font.SourceSansBold
     TitleLabel.TextSize = 13
@@ -663,7 +676,7 @@ do
     UI.ScrollFrame.BackgroundTransparency = 1
     UI.ScrollFrame.BorderSizePixel = 0
     UI.ScrollFrame.ScrollBarThickness = 5
-    UI.ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 600)
+    UI.ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 650)
     UI.ScrollFrame.Parent = MainFrame
 
     local scrollLayout = Instance.new("UIListLayout")
@@ -692,10 +705,25 @@ do
         return btn
     end
 
-    local ToggleFarmBtn = createButton("⏸ Stop Auto Herbs", Color3.fromRGB(200, 120, 30), 2)
-    local ToggleFlightBtn = createButton("🚀 Auto Sword Flight: ON", Color3.fromRGB(60, 200, 60), 3)
-    local ToggleCategoryBtn = createButton("👻 Mode: Spirit Herbs (วิญญาณ)", Color3.fromRGB(120, 60, 200), 4)
-    local ToggleDebugPanelBtn = createButton("🐛 Toggle Debug Panel: ON", Color3.fromRGB(80, 100, 160), 5)
+    -- กำหนดข้อความและสีปุ่มตามค่าที่โหลดมา
+    local farmText = State.isFarming and "⏸ Stop Auto Herbs" or "🌿 Start Auto Herbs"
+    local farmCol = State.isFarming and Color3.fromRGB(200, 120, 30) or Color3.fromRGB(40, 160, 80)
+    local ToggleFarmBtn = createButton(farmText, farmCol, 2)
+
+    local flightText = State.isAutoFlight and "🚀 Auto Sword Flight: ON" or "🚀 Auto Sword Flight: OFF"
+    local flightCol = State.isAutoFlight and Color3.fromRGB(60, 200, 60) or Color3.fromRGB(100, 100, 100)
+    local ToggleFlightBtn = createButton(flightText, flightCol, 3)
+
+    local catText = (State.herbCategory == "Spirit") and "👻 Mode: Spirit Herbs (วิญญาณ)" or "🌿 Mode: Normal Herbs (ปกติ)"
+    local catCol = (State.herbCategory == "Spirit") and Color3.fromRGB(120, 60, 200) or Color3.fromRGB(40, 120, 200)
+    local ToggleCategoryBtn = createButton(catText, catCol, 4)
+
+    local dbgText = State.debugPanelVisible and "🐛 Toggle Debug Panel: ON" or "🐛 Toggle Debug Panel: OFF"
+    local dbgCol = State.debugPanelVisible and Color3.fromRGB(80, 100, 160) or Color3.fromRGB(100, 100, 100)
+    local ToggleDebugPanelBtn = createButton(dbgText, dbgCol, 5)
+
+    -- เพิ่มปุ่ม Save Config ตามที่ขอ
+    local SaveConfigBtn = createButton("💾 Save Config (บันทึกการตั้งค่า)", Color3.fromRGB(40, 140, 200), 6)
 
     Hub.Fn.connect(ToggleFarmBtn.MouseButton1Click, function()
         State.isFarming = not State.isFarming
@@ -730,6 +758,12 @@ do
         ToggleDebugPanelBtn.BackgroundColor3 = State.debugPanelVisible and Color3.fromRGB(80, 100, 160) or Color3.fromRGB(100, 100, 100)
     end)
 
+    -- ปุ่มกดบันทึก Config
+    Hub.Fn.connect(SaveConfigBtn.MouseButton1Click, function()
+        saveConfig(State)
+        Hub.Fn.logDebug("💾 บันทึก Config ลงไฟล์สำเร็จเรียบร้อย!")
+    end)
+
     local isGuiVisible = true
     Hub.Fn.connect(OpenToggleBtn.MouseButton1Click, function()
         isGuiVisible = not isGuiVisible
@@ -745,5 +779,5 @@ do
     Hub.Fn.setWorker("startFarmLoop", State.isFarming, Hub.Fn.startFarmLoop)
     Hub.Fn.setWorker("startSwordFlightLoop", State.isAutoFlight, Hub.Fn.startSwordFlightLoop)
     Hub.Fn.setWorker("startDynamicStreamLoop", State.isDynamicStream, Hub.Fn.startDynamicStreamLoop)
-    Hub.Fn.logDebug("พร้อมใช้งาน V53 (Safe Rejoin Fix)!")
+    Hub.Fn.logDebug("พร้อมใช้งาน V55 (Config Save Added)!")
 end
